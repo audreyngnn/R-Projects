@@ -21,6 +21,21 @@ Analyzed Australian road fatalities (2010-2024) using three R visualizations to 
 
 <br>
 
+## 🎯 Key Visualisations
+### Temporal Risk Analysis
+<img width="669" height="481" alt="image" src="https://github.com/user-attachments/assets/f242c33c-5beb-4e1a-a9da-222519c4d49e" />
+
+<br>
+
+### Demographic Risk Analysis
+<img width="665" height="442" alt="image" src="https://github.com/user-attachments/assets/282ce0d0-df0a-486a-a8f1-2f94e075684d" />
+
+<br>
+
+### Policy Impact Analysis
+<img width="690" height="462" alt="image" src="https://github.com/user-attachments/assets/36431f5e-3a0d-4eb4-b716-723d735d8b76" />
+
+
 ## 🎯 Key Findings
 
 | Visualization | Chart Type | Key Finding |
@@ -28,6 +43,7 @@ Analyzed Australian road fatalities (2010-2024) using three R visualizations to 
 | **Temporal Risk Analysis** | Heatmap | 12pm-5pm accounts for ~33% of deaths; weekends are highest risk |
 | **Demographic Risk Analysis** | Bubble Plot | Men aged 18-34 face highest risk; females significantly below baseline |
 | **Policy Impact Timeline** | Line Chart | Post-2011 decline reversed in 2019; not on track for 2030 target (50% reduction) |
+
 
 <br>
 
