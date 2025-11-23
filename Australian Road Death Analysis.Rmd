@@ -1,0 +1,501 @@
+---
+title: "Australian Road Death Analysis"
+author: "Audrey Nguyen"
+date: "2025-11-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Visualisation 1: Temporal Risk Heatmap
+
+```{r visualisation1}
+# R Visualisation 1: Temporal Risk Heatmap
+# --- Libraries ---
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(viridis)
+library(plotly)
+
+library(scales)
+library(zoo)
+library(purrr)
+
+# Load data
+fatality <- read_excel("cleaned_data.xlsx", sheet = "Processed_Fatality")
+
+# Filter data to ONLY include years 2010-2024
+fatality <- fatality %>%
+  filter(Year >= 2010 & Year <= 2024)
+
+# Enhanced data preparation
+fatality <- fatality %>%
+  mutate(
+    Hour = hour(hms(Time)),
+    Weekday = factor(Dayweek, 
+                     levels = c("Monday", "Tuesday", "Wednesday", "Thursday", 
+                                "Friday", "Saturday", "Sunday"),
+                     labels = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")),
+    Month = factor(Month, levels = 1:12, 
+                   labels = c("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")),
+    Year = as.factor(Year),
+    # Create high-risk time period flag
+    HighRiskPeriod = case_when(
+      Hour >= 12 & Hour <= 17 ~ "High Risk (12pm-17pm)",
+      TRUE ~ "Standard Risk"
+    ),
+    # Create weekend flag
+    Weekend = ifelse(Weekday %in% c("Saturday", "Sunday"), "Weekend", "Weekday")
+  )
+
+# Calculate overall statistics for annotations (2010-2024 only)
+total_deaths <- nrow(fatality)
+peakhour_deaths <- fatality %>% 
+  filter(Hour >= 12 & Hour <= 17) %>% 
+  nrow()
+peakhour_percentage <- round(peakhour_deaths / total_deaths * 100, 1)
+
+# Calculate the actual number of years in the filtered data
+years_in_data <- length(unique(fatality$Year))
+
+# Aggregate counts by Hour x Weekday with additional metrics
+heat_data <- fatality %>%
+  group_by(Hour, Weekday) %>%
+  summarise(
+    Deaths = n(),
+    # Calculate rate per year using actual years in data
+    AnnualRate = Deaths / years_in_data,
+    .groups = "drop"
+  ) %>%
+  # Add risk level categorization
+  mutate(
+    RiskLevel = case_when(
+      Deaths >= quantile(Deaths, 0.8) ~ "Very High",
+      Deaths >= quantile(Deaths, 0.6) ~ "High", 
+      Deaths >= quantile(Deaths, 0.4) ~ "Moderate",
+      Deaths >= quantile(Deaths, 0.2) ~ "Low",
+      TRUE ~ "Very Low"
+    ),
+    # Highlight the dangerous period
+    DangerPeriod = ifelse(Hour >= 12 & Hour <= 17, "Danger Zone", "Normal")
+  )
+
+# Create the enhanced heatmap
+p1 <- ggplot(heat_data, aes(x = Hour, y = Weekday, fill = Deaths)) +
+  geom_tile(color = "white", linewidth = 0.3) +
+  # Add border around high-risk hours
+  geom_rect(data = filter(heat_data, Hour >= 12 & Hour <= 17),
+            aes(xmin = Hour - 0.5, xmax = Hour + 0.5, 
+                ymin = as.numeric(Weekday) - 0.5, ymax = as.numeric(Weekday) + 0.5),
+            fill = NA, color = "red", linewidth = 1, inherit.aes = FALSE) +
+  # Use a more sophisticated color scale
+  scale_fill_viridis_c(option = "plasma", name = "Deaths\n(2010-2024)",
+                       trans = "sqrt", # Square root transformation for better color distribution
+                       labels = scales::comma_format()) +
+  # Enhanced scales and labels
+  scale_x_continuous(breaks = seq(0, 23, 2), 
+                     labels = paste0(seq(0, 23, 2), ":00")) +
+  scale_y_discrete() +
+  
+  # Professional styling
+  labs(
+    title = "Australian Road Deaths: Temporal Risk Analysis (2010-2024)",
+    subtitle = paste0("High-risk period (12pm-17pm) accounts for ", peakhour_percentage, "% of all fatalities | Years analyzed: ", years_in_data),
+    x = "Hour of Day",
+    y = "Day of Week",
+    caption = "Source: Australian Road Deaths Database | Red borders highlight Danger Zone (2010-2024)"
+  ) +
+  
+  # Clean theme
+  theme_minimal() +
+  theme(
+    axis.title.y = element_text(
+      size = 11, face = "bold",
+      margin = margin(r = 15)   # increase this value to push title away from tick labels
+    ),
+    axis.text.y = element_text(
+      margin = margin(r = 5)    # keep small margin between labels and tick marks
+    ),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5, color = "darkred"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.title = element_text(size = 11, face = "bold"),
+    legend.position = "right",
+    panel.grid = element_blank(),
+    plot.caption = element_text(size = 9, color = "gray50")
+  )
+
+# Additional Analysis: Create a summary statistics table
+risk_summary <- fatality %>%
+  group_by(HighRiskPeriod) %>%
+  summarise(
+    Deaths = n(),
+    Percentage = round(n() / nrow(fatality) * 100, 1),
+    DeathsPerYear = round(n() / years_in_data, 1)
+  )
+
+# Also create hourly summary to identify actual peak hours
+hourly_summary <- fatality %>%
+  count(Hour, name = "Deaths") %>%
+  arrange(desc(Deaths)) %>%
+  mutate(
+    Percentage = round(Deaths / sum(Deaths) * 100, 1),
+    RankRisk = rank(-Deaths)
+  )
+
+# Print data summary
+print(paste("Data filtered for years 2010-2024"))
+print(paste("Total years in dataset:", years_in_data))
+print(paste("Total deaths in filtered period:", total_deaths))
+print("")
+print("Risk Period Analysis:")
+print(risk_summary)
+print("\nTop 6 Deadliest Hours:")
+print(head(hourly_summary, 6))
+
+# Show the plot
+print(p1)
+```
+
+## R Visualisation 2: Bubble Plot with Known Baseline
+
+```{r visualisation2}
+# R Visualisation 2: Bubble Plot with Known Baseline
+# --- Libraries ---
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(viridis)
+library(plotly)
+
+library(scales)
+library(zoo)
+library(purrr)
+
+# Load data
+fatality <- read_excel("cleaned_data.xlsx", sheet = "Processed_Fatality")
+
+# 1. Find most common known demographic group (exclude unknowns)
+fatality <- fatality %>%
+  mutate(
+    Year = if (inherits(Year, "Date") || inherits(Year, "POSIXt")) year(Year) else as.integer(as.character(Year))
+  )
+
+# --- pipeline ---
+most_common_known <- fatality %>%
+  filter(
+    Gender != "Unknown",
+    `National Remoteness Areas 2021` != "Unknown",
+    !is.na(`Age group`)
+  ) %>%
+  count(`Age group`, Gender, `National Remoteness Areas 2021`,
+        sort = TRUE, name = "Deaths") %>%
+  slice(1)
+
+baseline_age       <- most_common_known$`Age group`
+baseline_gender    <- most_common_known$Gender
+baseline_remoteness<- most_common_known$`National Remoteness Areas 2021`
+
+# 2. Calculate risk ratio based on pre-defined baseline (2010-2024)
+demo_stats <- fatality %>%
+  filter(Year >= 2010, Year <= 2024) %>%     
+  group_by(`Age group`, Gender, `National Remoteness Areas 2021`) %>%
+  summarise(Deaths = n(), .groups = "drop") %>%
+  mutate(
+    baseline_deaths = most_common_known$Deaths,
+    Risk_Ratio = Deaths / baseline_deaths,
+    Risk_category = case_when(
+      Risk_Ratio >= 2.0  ~ "Very High Risk (2x+)",
+      Risk_Ratio >= 1.5  ~ "High Risk (1.5-2x)",
+      Risk_Ratio >= 0.75 ~ "Moderate Risk",
+      TRUE               ~ "Lower Risk"
+    ),
+    Has_Unknown = ifelse(Gender == "Unknown" |
+                           `National Remoteness Areas 2021` == "Unknown",
+                         "Unknown Data", "Known Data")
+  )
+
+# Separate known vs unknown
+known_data <- demo_stats %>% filter(Has_Unknown == "Known Data")
+unknown_data <- demo_stats %>% filter(Has_Unknown == "Unknown Data")
+
+# 3. Enhanced visualisation with pre-defined baseline
+p2 <- plot_ly()
+
+# Unknown data as diamonds (bottom layer)
+if(nrow(unknown_data) > 0) {
+  p2 <- p2 %>% add_trace(
+    data = unknown_data,
+    x = ~`Age group`,
+    y = ~Gender,
+    size = ~Deaths,
+    color = ~Risk_Ratio,
+    colors = c("#0D0887", "wheat", "#F98C0A"),
+    text = ~paste("<b>", `Age group`, Gender, "</b>",
+                  "<br><b>Location:</b>", `National Remoteness Areas 2021`,
+                  "<br><b>Deaths:</b>", Deaths,
+                  "<br><b>Risk Ratio:</b>", round(Risk_Ratio, 2),
+                  "<br><b>Risk Level:</b>", Risk_category,
+                  "<br><b>Data Quality:</b>", Has_Unknown),
+    hovertemplate = "%{text}<extra></extra>",
+    type = "scatter",
+    mode = "markers",
+    marker = list(
+      symbol = "diamond",
+      sizemode = "diameter",
+      sizemin = 5,
+      sizemax = 50,
+      line = list(width = 2, color = "darkgray"),
+      opacity = 0.7,
+      showscale = FALSE
+    ),
+    name = "Unknown Data",
+    showlegend = TRUE,
+    hoverinfo = "text"
+  )
+}
+
+# Known data as circles (top layer)
+p2 <- p2 %>% add_trace(
+  data = known_data,
+  x = ~`Age group`,
+  y = ~Gender,
+  size = ~Deaths,
+  color = ~Risk_Ratio,
+  colors = c("#0D0887", "wheat", "#F98C0A"),
+  text = ~paste("<b>", `Age group`, Gender, "</b>",
+                "<br><b>Location:</b>", `National Remoteness Areas 2021`,
+                "<br><b>Deaths:</b>", Deaths,
+                "<br><b>Risk Ratio:</b>", round(Risk_Ratio, 2),
+                "<br><b>Risk Level:</b>", Risk_category,
+                "<br><b>Data Quality:</b>", Has_Unknown),
+  hovertemplate = "%{text}<extra></extra>",
+  type = "scatter",
+  mode = "markers",
+  marker = list(
+    symbol = "circle",
+    sizemode = "diameter", 
+    sizemin = 5,
+    sizemax = 50,
+    line = list(width = 0.5, color = "black"),
+    colorbar = list(
+      title = ""
+    )
+  ),
+  name = "Known Data",
+  showlegend = TRUE
+) %>%
+  layout(
+    title = list(
+      text = paste0("<b>Australian Road Fatalities: Demographic Risk Analysis</b><br>",
+                    "<sub>Source: Australian Road Deaths Database 2010-2024 | Risk Ratios vs Pre-defined Baseline</sub>"),
+      font = list(size = 16)
+    ),
+    xaxis = list(
+      title = "<b>Age Group</b>",
+      titlefont = list(size = 14),
+      categoryorder = "array",
+      categoryarray = c("0-17", "18-24", "25-34", "35-44", "45-54", "55-64", "65-74", "75-84", "85+")
+    ),
+    yaxis = list(
+      title = "<b>Gender</b>",
+      titlefont = list(size = 14)
+    ),
+    annotations = list(
+      list(
+        text = "<i>Bubble size = Total Deaths | Color = Risk Ratio vs Pre-defined Baseline<br> </i>",
+        x = 0.5, y = -0.15, 
+        xref = "paper", yref = "paper",
+        showarrow = FALSE,
+        font = list(size = 11, color = "gray")
+      ),
+      list(
+        text = paste0("<b>Pre-defined Baseline:</b> ", baseline_gender, ", ", baseline_remoteness, 
+                      ", ", baseline_age, " (Risk Ratio = 1.0)"),
+        x = 1, y = 1.02, 
+        xref = "paper", yref = "paper",
+        showarrow = FALSE, 
+        font = list(size = 10, color = "#0D0887"),
+        bgcolor = "wheat",
+        bordercolor = "#0D0887",
+        borderwidth = 1
+      )
+    ),
+    margin = list(t = 80, b = 100),
+    plot_bgcolor = "white",
+    paper_bgcolor = "white"
+  )
+
+p2
+```
+
+## R Visualisation 3: Policy Impact Analysis - Monthly Deaths
+
+```{r visualisation3}
+# R Visualisation 3: Policy Impact Analysis - Monthly Deaths
+# --- Libraries ---
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(purrr)
+library(zoo)
+
+# Load data
+fatality <- read_excel("cleaned_data.xlsx", sheet = "Processed_Fatality")
+# 1) Clean + Constrain to 2010–2024
+
+fatality <- fatality %>%
+  mutate(
+    Year_chr   = as.character(Year),
+    Month_chr  = as.character(Month),
+    Month_lower   = tolower(trimws(Month_chr)),
+    Month_numeric = dplyr::case_when(
+      grepl("^[0-9]{1,2}$", Month_lower) ~ as.integer(Month_lower),
+      Month_lower %in% tolower(month.abb)  ~ match(Month_lower, tolower(month.abb)),
+      Month_lower %in% tolower(month.name) ~ match(Month_lower, tolower(month.name)),
+      TRUE ~ NA_integer_
+    ),
+    Year_numeric = suppressWarnings(as.integer(Year_chr))
+  ) %>%
+  filter(!is.na(Year_numeric), !is.na(Month_numeric),
+         Year_numeric >= 2010, Year_numeric <= 2024) %>%
+  mutate(Date = make_date(year = Year_numeric, month = Month_numeric, day = 1))
+
+# 2) Policy events: x from Date, only manual y_position + per-line colors
+policy_events <- data.frame(
+  Date = as.Date(c("2011-01-01","2018-01-01","2018-07-01","2021-01-01")),
+  Policy = c("National Strategy\n2011-20",
+             "Vehicle Safety\nStandards",
+             "Mobile Phone\nEnforcement",
+             "National Strategy\n2021-30"),
+  Policy_Short = c(" Strategy 2011-20\n commerces",
+                   " Enhanced Vehicle\n Safety Standards",
+                   " Mobile Phone\n Penalties\n Enforcement",
+                   " Strategy 2021-30\n commerces"),
+  Type = c("National Strategy","Vehicle Safety","Driver Behaviour","National Strategy"),
+  Impact_Expected = "Reduce",
+  y_position = c(125, 80, 60, 125),
+  # New: color each dashed vertical line (2011–20 and 2021–30 get custom colors)
+  LineColor = c("#0D0887", "#415A77", "#415A77", "#89226A"),
+  stringsAsFactors = FALSE
+)
+
+# 3) Monthly series
+monthly_data <- fatality %>%
+  group_by(Date, Year_numeric, Month_numeric) %>%
+  summarise(Deaths = n(), .groups = "drop") %>%
+  arrange(Date) %>%
+  mutate(
+    Deaths_MA12 = zoo::rollmean(Deaths, k = 12, fill = NA, align = "right"),
+    YoY_Change  = (Deaths - dplyr::lag(Deaths, 12)) / dplyr::lag(Deaths, 12) * 100
+  )
+
+# 4) Policy impact (optional analytics)
+policy_impact <- policy_events %>%
+  mutate(
+    Pre_Period_Deaths = purrr::map_dbl(Date, function(d0) {
+      pre <- monthly_data %>% filter(Date >= (d0 %m-% months(12)), Date < d0, !is.na(Deaths))
+      if (nrow(pre) > 0) mean(pre$Deaths) else NA_real_
+    }),
+    Post_Period_Deaths = purrr::map_dbl(Date, function(d0) {
+      post <- monthly_data %>% filter(Date >= d0, Date < (d0 %m+% months(12)), !is.na(Deaths))
+      if (nrow(post) > 0) mean(post$Deaths) else NA_real_
+    }),
+    Impact_Percent = dplyr::case_when(
+      is.na(Pre_Period_Deaths) | is.na(Post_Period_Deaths) ~ NA_real_,
+      Pre_Period_Deaths == 0 ~ NA_real_,
+      TRUE ~ round((Post_Period_Deaths - Pre_Period_Deaths) / Pre_Period_Deaths * 100, 1)
+    )
+  )
+
+# 5) Targets
+baseline_2018_2020 <- 1142
+target_2030 <- 571
+target_2030_monthly <- target_2030 / 12  # ~47.6
+
+# 6) Plot
+p3 <- ggplot(monthly_data, aes(x = Date)) +
+  # Strategy backgrounds
+  annotate("rect", xmin = as.Date("2011-01-01"), xmax = as.Date("2020-12-31"),
+           ymin = -Inf, ymax = Inf, alpha = 0.15, fill = "#0D0887") +
+  annotate("rect", xmin = as.Date("2021-01-01"), xmax = as.Date("2024-12-31"),
+           ymin = -Inf, ymax = Inf, alpha = 0.15, fill = "#89226A") +
+  # COVID window
+  annotate("rect", xmin = as.Date("2020-03-01"), xmax = as.Date("2021-09-01"),
+           ymin = -Inf, ymax = Inf, alpha = 0.2, fill = "#F98C0A") +
+  # Series
+  geom_line(aes(y = Deaths), color = "#E8E8E8", alpha = 0.7, size = 0.3) +
+  geom_line(aes(y = Deaths_MA12), color = "#0D1B2A", size = 1.2) +
+  # Policy lines at actual dates, now with per-line colors
+  geom_vline(data = policy_events,
+             aes(xintercept = Date, color = LineColor),
+             linetype = "dashed", size = 0.8, alpha = 0.8) +
+  # Labels: x = Date, y = manual y_position (text color kept uniform)
+  geom_text(data = policy_events,
+            aes(x = Date, y = y_position, label = Policy_Short),
+            color = "#0D1B2A", size = 2.8, fontface = "bold",
+            hjust = 0, vjust = 0.5) +
+  # 2030 target
+  geom_hline(yintercept = target_2030_monthly, color = "#D23105",
+             linetype = "dashed", size = 1, alpha = 0.8) +
+  annotate("text", x = as.Date("2023-01-01"), y = target_2030_monthly + 5,
+           label = paste0(" 2030 Target\n (", round(target_2030_monthly, 1), " deaths/mth)"),
+           color = "#D23105", size = 3, fontface = "bold", hjust = 0) +
+  # Titles on backgrounds
+  annotate("text", x = as.Date("2015-11-15"), y = 138,
+           label = "National Strategy 2011-2020", color = "#0D0887",
+           size = 3.5, fontface = "bold", alpha = 0.8) +
+  annotate("text", x = as.Date("2022-11-15"), y = 138,
+           label = "National Strategy 2021-2030", color = "#89226A",
+           size = 3.5, fontface = "bold", alpha = 0.8) +
+  # COVID label
+  annotate("text", x = as.Date("2020-09-01"), y = 110,
+           label = "  COVID-19\n  PERIOD", color = "#F98C0A",
+           size = 3, fontface = "bold", hjust = 0.5) +
+  # Trend note
+  annotate("curve", x = as.Date("2019-06-01"), xend = as.Date("2019-01-01"),
+           y = 120, yend = 102, color = "#D23105", size = 1,
+           arrow = arrow(length = unit(0.2, "cm")), curvature = 0.2) +
+  annotate("text", x = as.Date("2019-12-01"), y = 125,
+           label = "Trend Reversal\n in 2019", color = "#D23105",
+           size = 3, fontface = "bold", hjust = 0.5) +
+  # Scales
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y",
+               limits = c(as.Date("2010-01-01"), as.Date("2025-01-01")),
+               expand = expansion(mult = c(0.02, 0.05))) +
+  scale_y_continuous(breaks = seq(40, 140, 10),
+                     limits = c(40, 145),
+                     expand = expansion(mult = c(0.02, 0.02))) +
+  # Use the literal hex colors from LineColor and suppress legend
+  scale_color_identity(guide = "none") +
+  # Labels + theme
+  labs(
+    title = "Australian Road Deaths: Policy Impact Analysis (2010-2024)",
+    subtitle = "Monthly deaths with 12-month moving average and Policy Intervention Timeline",
+    x = NULL, y = "Monthly Deaths",
+    caption = "Source: Australian Road Deaths Database \n2030 Target: 571 annual fatalities (50% reduction from 2018-2020 baseline of 1,142)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0, margin = margin(b = 5)),
+    plot.subtitle = element_text(size = 12, hjust = 0, color = "#415A77", margin = margin(b = 20)),
+    axis.title.y = element_text(size = 12, face = "bold", margin = margin(r = 10)),
+    axis.text.x = element_text(size = 10, color = "#0D1B2A"),
+    axis.text.y = element_text(size = 10, color = "#0D1B2A"),
+    panel.grid.major.x = element_line(color = "#E8E8E8", size = 0.3),
+    panel.grid.major.y = element_line(color = "#E8E8E8", size = 0.3),
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    plot.caption = element_text(size = 9, color = "#778DA9", hjust = 0, margin = margin(t = 15)),
+    plot.margin = margin(20, 30, 20, 20)
+  )
+
+print(p3)
+```
